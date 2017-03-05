@@ -8,16 +8,6 @@ Input #0, wav, from 'answer.wav':
   Duration: 00:00:01.45, bitrate: 176 kb/s
     Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 11025 Hz, 1 channels, s16, 176 kb/s
 
-# Interfaces
-
-- SDL interface
-  - https://wiki.libsdl.org/SDL_AudioSpec
-  - https://wiki.libsdl.org/SDL_OpenAudioDevice
-- pulseaudio interface
-  - https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/Developer/
-- kernel interface (alsa)
-  - https://www.kernel.org/doc/html/v4.10/sound/index.html
-
 # Example
 
 $ make
@@ -52,6 +42,9 @@ SDL_AudioDevice (as open_devices[16])
 
 Q. when does pulseaudio check there's at least one current_audio.outputDevices ?
 
+I think this only affects when we explicitly specified sink/source name.
+If we didn't specify and there's no sink/source, some step of client call (like stream creation) will fail?
+
 */
 
 void _main(char *filename) {
@@ -73,21 +66,22 @@ void _main(char *filename) {
   //  - allocate SDL_AudioDevice with paused and enabled on
   //  - PULSEAUDIO_OpenDevice (as current_audio.impl.OpenDevice) =>
   //    - prepare pa_sample_spec, pa_buffer_attr, pa_channel_map, pa_stream_flags_t
+  //    - SDL_PrivateAudioData.mixbuf = AudioSpec.size
   //    - allocate SDL_PrivateAudioData.mixbuf
+  //    - some delicate pa_buffer_attr setup
   //    - ConnectToPulseServer => xxx_Internal =>
-  //      - pa_mainloop_new ?
-  //      - pa_mainloop_get_api ?
-  //      - pa_context_new ?
-  //      - pa_context_connect ?
+  //      - pa_mainloop_new, pa_mainloop_get_api
+  //      - pa_context_new, pa_context_connect
   //      - pa_mainloop_iterate until pa_context_get_state == PA_CONTEXT_READY
-  //    - pa_channel_map_init_auto ?
-  //    - pa_stream_new ?
-  //    - pa_stream_connect_playback ?
-  //    - pa_mainloop_iterate until pa_context_get_state == PA_CONTEXT_READY
+  //    - pa_channel_map_init_auto(pa_channel_map, spec.channels)
+  //    - pa_stream_new(pa_context, pa_sample_spec, pa_channel_map)
+  //    - pa_stream_connect_playback(pa_stream, pa_buffer_attr, pa_stream_flags_t)
+  //    - pa_mainloop_iterate until pa_stream_get_state == PA_STREAM_READY
   //  - allocate AudioDevice.buffer_queue_pool
   //    - AudioDevice.spec.callback = SDL_BufferQueueDrainCallback
   //  - push AudioDevice to global open_devices
-  //  - SDL_CreateThreadInternal(SDL_RunAudio) (see below)
+  //  - SDL_CreateThreadInternal(SDL_RunAudio)
+  //    - [spawn a dedicated thread for playing audio (see below)]
 
   // - SDL_RunAudio =>
   //   - loop below until AudioDevice.shutdown
@@ -96,8 +90,8 @@ void _main(char *filename) {
   //     - otherwise fill stream by executing AudioDevice.spec.callback (e.g. SDL_BufferQueueDrainCallback) =>
   //       - dequeue_audio_from_device
   //         - [copy data from AudioDevice.buffer_queue_head/tail/pool to mixbuf]
-  //     - PULSEAUDIO_PlayDevice => pa_stream_write ?
-  //     - PULSEAUDIO_WaitDevice =>
+  //     - PULSEAUDIO_PlayDevice => pa_stream_write(pa_stream, mixbuf, mixlen)
+  //     - PULSEAUDIO_WaitDevice => pa_mainloop_iterate until pa_stream_writable_size(pa_stream) >= mixlen
 
   if (dev == 0) {
     SDL_Log("Failed to open audio: %s", SDL_GetError());
